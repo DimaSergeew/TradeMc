@@ -2,14 +2,12 @@ package com.bedepay.trademc;
 
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
-import org.bukkit.command.Command;
-import org.bukkit.command.CommandSender;
+import org.bukkit.command.*;
 import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
-import org.bukkit.event.Listener;
-import org.bukkit.event.EventHandler;
+import org.bukkit.event.*;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -23,13 +21,15 @@ import java.lang.reflect.Method;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.file.Files;
+import java.sql.*;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.Date;
 
-public class TradeMc extends JavaPlugin {
+public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
 
-    // Проверяем, доступен ли метод JsonParser.parseString(...)
-    private static final boolean HAS_PARSE_STRING;
+    // --- GSON совместимость с 1.8.8 ---
+    private static final boolean HAS_PARSE_STRING; 
     static {
         boolean parseStringExists = false;
         try {
@@ -41,65 +41,76 @@ public class TradeMc extends JavaPlugin {
     }
 
     // --- Основные конфиги ---
-    private FileConfiguration config;         // config.yml
-    private FileConfiguration locale;         // locale.yml
+    private FileConfiguration config;      // config.yml
+    private FileConfiguration locale;      // locale.yml
 
-    // --- Работа с data.yml ---
-    private File dataFile;                    // файл data.yml
-    private FileConfiguration dataConfig;     // конфигурация data.yml
+    // --- Data.yml (локальное хранение) ---
+    private File dataFile;
+    private FileConfiguration dataConfig;
 
-    // Храним уникальные ключи уже выданных покупок: buyer_itemId
+    // Храним уже выданные покупки (buyer_itemId).
     private final Set<String> processedPurchases = new HashSet<>();
-
-    // Отложенные покупки (buyer -> список названий товаров)
+    // Если игрок офлайн — откладываем ему донат (buyer -> список товаров).
     private final Map<String, List<String>> pendingPurchases = new HashMap<>();
+
+    // --- MySQL ---
+    private Connection connection = null;
+    private boolean mysqlEnabled = false;
 
     @Override
     public void onEnable() {
-        // Загружаем основной config.yml
         saveDefaultConfig();
         config = getConfig();
 
-        // Загружаем locale.yml
+        // Загружаем локализацию locale.yml
         loadLocale();
 
-        // Создаём/загружаем data.yml
+        // Проверяем, нужно ли MySQL, если да — подключаемся
+        mysqlEnabled = config.getBoolean("mysql.enabled", false);
+        if (mysqlEnabled) {
+            connectToMySQL();
+            createTableIfNotExists();
+        }
+
+        // Загружаем/создаём data.yml
         loadDataFile();
         loadProcessedPurchases();
         loadPendingPurchases();
 
-        // Выведем в консоль, что за сервер и GSON у нас
-        getLogger().info("Server brand: " + Bukkit.getName() 
-            + ", version: " + Bukkit.getBukkitVersion());
-        getLogger().info("Has JsonParser.parseString? " + HAS_PARSE_STRING);
+        // Регистрируем слушатель входа игрока
+        Bukkit.getPluginManager().registerEvents(this, this);
 
-        // Однократная проверка покупок при старте (false = не ретраим в этом вызове)
+        // Регистрируем автодополнение для /trademc
+        getCommand("trademc").setTabCompleter(this);
+
+        // Однократная проверка покупок при старте
         checkNewPurchases(false);
 
-        // Регулярная проверка покупок через указанный интервал
+        // Периодическая проверка покупок
         int interval = config.getInt("check-interval-seconds", 60);
         Bukkit.getScheduler().scheduleSyncRepeatingTask(
-                this,
-                () -> checkNewPurchases(false),
-                20L * interval,
-                20L * interval
+            this,
+            () -> checkNewPurchases(false),
+            20L * interval,
+            20L * interval
         );
 
-        // Слушатель входа игроков — выдадим отложенные покупки
-        Bukkit.getPluginManager().registerEvents(new PlayerJoinListener(), this);
-
-        getLogger().info("TradeMC плагин включен.");
+        getLogger().info("TradeMC плагин включён. GSON parseString? " + HAS_PARSE_STRING);
     }
 
     @Override
     public void onDisable() {
-        // Сохраняем данные и делаем бэкап
+        // Сохраняем всё в data.yml + бэкап
         saveDataFile();
         backupDataFile();
-        getLogger().info("TradeMC плагин отключен.");
+
+        // Закрываем MySQL (если активен)
+        closeMySQL();
+
+        getLogger().info("TradeMC плагин отключён.");
     }
 
-    // --- Обработка команд /trademc ... ---
+    // --- Реализация команды /trademc ---
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
         if (!cmd.getName().equalsIgnoreCase("trademc")) return false;
@@ -116,8 +127,8 @@ public class TradeMc extends JavaPlugin {
                 return true;
             }
             boolean success = testConnection();
-            sender.sendMessage(color(success
-                ? getLocaleMsg("messages.check-ok")
+            sender.sendMessage(color(success 
+                ? getLocaleMsg("messages.check-ok") 
                 : getLocaleMsg("messages.check-fail")));
             return true;
         }
@@ -140,7 +151,6 @@ public class TradeMc extends JavaPlugin {
                 sender.sendMessage(color(getLocaleMsg("messages.not-allowed")));
                 return true;
             }
-            // Покажем 10 последних записей из лог-файла
             List<String> logLines = loadLogLines(10);
             sender.sendMessage(color(getLocaleMsg("messages.history-title")));
             if (logLines.isEmpty()) {
@@ -153,23 +163,51 @@ public class TradeMc extends JavaPlugin {
             return true;
         }
 
-        // Иначе подсказка
+        // Подсказка
         sender.sendMessage(color("&e/trademc check, /trademc getOnline, /trademc history"));
         return true;
     }
 
-    /**
-     * Проверяем соединение через метод shop.getOnline
-     */
+    // --- Автодополнение подкоманд ---
+    @Override
+    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        if (!command.getName().equalsIgnoreCase("trademc")) return null;
+
+        if (args.length == 1) {
+            // Подкоманды
+            List<String> subCommands = Arrays.asList("check", "getOnline", "history");
+            List<String> result = new ArrayList<>();
+            for (String sc : subCommands) {
+                if (sc.toLowerCase().startsWith(args[0].toLowerCase())) {
+                    result.add(sc);
+                }
+            }
+            return result;
+        }
+        return null;
+    }
+
+    // --- Событие при входе игрока: выдаём отложенные покупки ---
+    @EventHandler
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        String buyerKey = event.getPlayer().getName().toLowerCase();
+        if (pendingPurchases.containsKey(buyerKey)) {
+            List<String> items = pendingPurchases.get(buyerKey);
+            for (String itemName : items) {
+                giveDonation(event.getPlayer().getName(), itemName);
+            }
+            items.clear();
+            savePendingPurchases();
+        }
+    }
+
+    // --- Проверка соединения shop.getOnline ---
     private boolean testConnection() {
         String response = callTradeMcApi("shop", "getOnline", "shop=" + getFirstShop());
         return !response.contains("\"error\"");
     }
 
-    /**
-     * Проверка новых покупок через shop.getLastPurchases (shops=...)
-     * @param isRetryCall признак, что это повторная попытка (чтобы не зациклиться бесконечно)
-     */
+    // --- Проверяем новые покупки (shops=...) ---
     private void checkNewPurchases(boolean isRetryCall) {
         String shopsParam = "shops=" + config.getString("shops", "168130");
         String response = callTradeMcApi("shop", "getLastPurchases", shopsParam);
@@ -190,17 +228,15 @@ public class TradeMc extends JavaPlugin {
         }
 
         try {
-            // Парсим ответ (через метод parseJson для совместимости)
             JsonElement root = parseJson(response);
             if (!root.isJsonObject()) return;
-
             JsonObject rootObj = root.getAsJsonObject();
             if (!rootObj.has("response")) return;
 
             JsonElement respElem = rootObj.get("response");
             if (!respElem.isJsonArray()) return;
-
             JsonArray purchases = respElem.getAsJsonArray();
+
             for (JsonElement purchaseElem : purchases) {
                 if (!purchaseElem.isJsonObject()) continue;
                 JsonObject purchaseObj = purchaseElem.getAsJsonObject();
@@ -212,7 +248,8 @@ public class TradeMc extends JavaPlugin {
                     ? purchaseObj.get("item").getAsJsonObject() 
                     : null;
                 int itemId = (itemObj != null && itemObj.has("id")) 
-                    ? itemObj.get("id").getAsInt() : -1;
+                    ? itemObj.get("id").getAsInt() 
+                    : -1;
                 String itemName = (itemObj != null && itemObj.has("name")) 
                     ? itemObj.get("name").getAsString() 
                     : "Unknown";
@@ -222,13 +259,15 @@ public class TradeMc extends JavaPlugin {
                     processedPurchases.add(uniqueKey);
                     saveProcessedPurchases();
 
-                    // Проверяем, онлайн ли игрок
+                    // Если онлайн — выдаём сразу, иначе откладываем
                     Player p = Bukkit.getPlayerExact(buyer);
                     if (p != null && p.isOnline()) {
                         giveDonation(buyer, itemName);
                     } else {
-                        // Если офлайн — откладываем до входа
-                        pendingPurchases.computeIfAbsent(buyer.toLowerCase(), k -> new ArrayList<>()).add(itemName);
+                        pendingPurchases.computeIfAbsent(
+                            buyer.toLowerCase(), 
+                            k -> new ArrayList<>()
+                        ).add(itemName);
                         savePendingPurchases();
                         getLogger().info("[TradeMC] Игрок " + buyer + " офлайн, донат '" + itemName + "' отложен.");
                     }
@@ -239,46 +278,64 @@ public class TradeMc extends JavaPlugin {
         }
     }
 
-    /**
-     * Выдача доната, + лог, + широковещательное сообщение
-     */
+    // --- Выдача доната игроку ---
     private void giveDonation(String buyer, String itemName) {
-        // Пример команды: LuckPerms
+        // Пример команды (LuckPerms)
         Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "lp user " + buyer + " group add VIP");
 
-        // Запишем в лог
+        // Лог
         String logMessage = getLocaleMsg("messages.purchase-log")
-                .replace("%buyer%", buyer)
-                .replace("%item%", itemName);
+            .replace("%buyer%", buyer)
+            .replace("%item%", itemName);
         logToFile(logMessage);
 
-        // Цветной анонс всем игрокам
-        String broadcastMsg = color(getLocaleMsg("messages.purchase-broadcast")
+        // Если MySQL включен, пишем в таблицу
+        if (mysqlEnabled && connection != null) {
+            logDonationToDB(buyer, itemName);
+        }
+
+        // Красивый анонс в чат
+        String broadcastMsg = color(
+            getLocaleMsg("messages.purchase-broadcast")
                 .replace("%buyer%", buyer)
-                .replace("%item%", itemName));
+                .replace("%item%", itemName)
+        );
         for (Player online : Bukkit.getOnlinePlayers()) {
             online.sendMessage(broadcastMsg);
         }
     }
 
-    /**
-     * Универсальный метод GET-запроса к API TradeMC
-     */
+    // --- Запись факта выдачи доната в таблицу tradedonations ---
+    private void logDonationToDB(String buyer, String itemName) {
+        if (connection == null) return;
+        try (PreparedStatement ps = connection.prepareStatement(
+                "INSERT INTO tradedonations (buyer, item_name) VALUES (?, ?)")) {
+            ps.setString(1, buyer);
+            ps.setString(2, itemName);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            getLogger().warning("[TradeMC] Ошибка записи доната в БД: " + e.getMessage());
+        }
+    }
+
+    // --- Метод GET-запроса к API ---
     private String callTradeMcApi(String apiName, String methodName, String params) {
         try {
             int apiVer = config.getInt("api-version", 3);
             String urlStr = "https://api.trademc.org/" + apiName + "." + methodName + "?" + params + "&v=" + apiVer;
-
             HttpURLConnection con = (HttpURLConnection) new URL(urlStr).openConnection();
             con.setRequestMethod("GET");
             con.setConnectTimeout(5000);
             con.setReadTimeout(5000);
 
             int status = con.getResponseCode();
-            BufferedReader in = new BufferedReader(new InputStreamReader(
-                (status >= 200 && status < 300) ? con.getInputStream() : con.getErrorStream()
-            ));
-
+            BufferedReader in = new BufferedReader(
+                new InputStreamReader(
+                    (status >= 200 && status < 300) 
+                        ? con.getInputStream() 
+                        : con.getErrorStream()
+                )
+            );
             StringBuilder sb = new StringBuilder();
             String line;
             while ((line = in.readLine()) != null) {
@@ -292,32 +349,18 @@ public class TradeMc extends JavaPlugin {
         }
     }
 
-    /**
-     * Парсим JSON через рефлексию:
-     * - Если есть JsonParser.parseString(...), используем
-     * - Иначе используем new JsonParser().parse(...)
-     */
+    // --- GSON: обёртка для parseString(...) ---
     private JsonElement parseJson(String json) {
         if (HAS_PARSE_STRING) {
-            // Новый метод из GSON 2.8.6+
-            return JsonParser.parseString(json);
+            return JsonParser.parseString(json); 
         } else {
-            // Старый метод для 1.8.8/старых GSON
             JsonParser parser = new JsonParser();
             return parser.parse(json);
         }
     }
 
-    /**
-     * Берём первый магазин, если их несколько
-     */
-    private String getFirstShop() {
-        String shops = config.getString("shops", "168130");
-        String[] parts = shops.split(",");
-        return parts[0].trim();
-    }
+    // --- Работа с данными (data.yml) ---
 
-    // --- Работа с data.yml ---
     private void loadDataFile() {
         dataFile = new File(getDataFolder(), "data.yml");
         if (!dataFile.exists()) {
@@ -340,9 +383,6 @@ public class TradeMc extends JavaPlugin {
         }
     }
 
-    /**
-     * Резервная копия data.yml при выключении
-     */
     private void backupDataFile() {
         try {
             if (dataFile.exists()) {
@@ -404,7 +444,7 @@ public class TradeMc extends JavaPlugin {
         return input.replace("&", "§");
     }
 
-    // --- Запись в лог-файл ---
+    // --- Лог-файл ---
     private void logToFile(String message) {
         try {
             File logDir = new File(getDataFolder(), "logs");
@@ -420,9 +460,6 @@ public class TradeMc extends JavaPlugin {
         }
     }
 
-    /**
-     * Читаем последние N строк из logs/trademc.log
-     */
     private List<String> loadLogLines(int n) {
         List<String> lines = new ArrayList<>();
         File logFile = new File(getDataFolder(), "logs/trademc.log");
@@ -458,20 +495,52 @@ public class TradeMc extends JavaPlugin {
         return lines;
     }
 
-    // --- Событие входа игрока ---
-    public class PlayerJoinListener implements Listener {
-        @EventHandler
-        public void onPlayerJoin(PlayerJoinEvent event) {
-            String buyerKey = event.getPlayer().getName().toLowerCase();
-            if (pendingPurchases.containsKey(buyerKey)) {
-                List<String> items = pendingPurchases.get(buyerKey);
-                // Выдаём все отложенные покупки
-                for (String itemName : items) {
-                    giveDonation(event.getPlayer().getName(), itemName);
-                }
-                items.clear();
-                savePendingPurchases();
-            }
+    // --- MySQL подключение и работа ---
+    private void connectToMySQL() {
+        String host = config.getString("mysql.host", "localhost");
+        int port = config.getInt("mysql.port", 3306);
+        String database = config.getString("mysql.database", "trade_db");
+        String user = config.getString("mysql.user", "root");
+        String pass = config.getString("mysql.password", "");
+        String url = "jdbc:mysql://" + host + ":" + port + "/" + database + "?useSSL=false&characterEncoding=UTF-8";
+
+        try {
+            // Для старых версий драйвера
+            Class.forName("com.mysql.jdbc.Driver"); 
+            // Или для новых: Class.forName("com.mysql.cj.jdbc.Driver");
+            connection = DriverManager.getConnection(url, user, pass);
+            getLogger().info("Успешно подключились к MySQL!");
+        } catch (Exception e) {
+            getLogger().warning("Не удалось подключиться к MySQL: " + e.getMessage());
+            mysqlEnabled = false; // отключим дальнейшие действия
         }
+    }
+
+    private void createTableIfNotExists() {
+        if (connection == null) return;
+        try (Statement stmt = connection.createStatement()) {
+            stmt.executeUpdate("CREATE TABLE IF NOT EXISTS tradedonations ("
+                + "id INT AUTO_INCREMENT PRIMARY KEY,"
+                + "buyer VARCHAR(64),"
+                + "item_name VARCHAR(255)"
+                + ")");
+            getLogger().info("Таблица tradedonations проверена/создана.");
+        } catch (SQLException e) {
+            getLogger().warning("Ошибка при создании таблицы: " + e.getMessage());
+        }
+    }
+
+    private void closeMySQL() {
+        if (connection != null) {
+            try {
+                connection.close();
+            } catch (SQLException ignored) {}
+        }
+    }
+
+    private String getFirstShop() {
+        String shops = config.getString("shops", "168130");
+        String[] parts = shops.split(",");
+        return parts[0].trim();
     }
 }

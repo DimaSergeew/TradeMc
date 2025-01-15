@@ -8,3 +8,5 @@ messages:
   getonline: "&eОтвет shop.getOnline:"
   history-title: "&6История выдачи донатов:"
   history-empty: "&7(Пока пусто)"
+  mysql-ok: "&aУспешно подключились к MySQL"
+  mysql-fail: "&cОшибка подключения к MySQL, см. консоль!"

@@ -1,5 +1,13 @@
-shops: "168130,168131"   # ID магазинов через запятую
-api-version: 3           # Версия API TradeMC
-check-interval-seconds: 60  # Интервал проверки новых покупок в секундах
-retry-attempts: 3        # Количество попыток повтора при ошибке
-retry-delay-seconds: 5   # Задержка между попытками в секундах
+shops: "168130"  # Можно "168130,168131" если несколько
+api-version: 3 # Версия API TradeMC
+check-interval-seconds: 60 # Интервал проверки новых покупок в секундах
+retry-attempts: 3 # Количество попыток повтора при ошибке
+retry-delay-seconds: 5 # Задержка между попытками в секундах
+
+mysql: # MySQL настройки
+  enabled: true # Включен ли MySQL
+  host: "localhost" # Хост MySQL
+  port: 3306 # Порт MySQL
+  database: "trade_db" # Имя базы данных
+  user: "trade_user" # Пользователь MySQL
+  password: "secret" # Пароль MySQL
