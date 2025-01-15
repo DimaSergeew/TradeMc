@@ -9,3 +9,5 @@ messages:
   history-empty: "&7Логи пусты."
   purchase-log: "&a%buyer% приобрёл донат: %item%."
   purchase-broadcast: "&bИгрок %buyer% купил донат: %item%."
+  reload-success: "&aКонфигурация успешно перезагружена."
+  reload-error: "&cОшибка при перезагрузке конфигурации."

@@ -1,5 +1,5 @@
 name: TradeMc
-version: '1.4'
+version: '1.5'
 main: com.bedepay.trademc.TradeMc
 api-version: '1.20'
 authors: [ bedepay ]
@@ -15,5 +15,5 @@ permissions:
     description: Позволяет использовать /trademc
     default: true
   trademc.admin:
-    description: Полный доступ к функционалу плагина (check, getOnline, history, debugPurchase)
+    description: Полный доступ к функционалу плагина (reload, check, getOnline, history, debugPurchase)
     default: op
