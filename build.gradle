@@ -1,5 +1,6 @@
 plugins {
     id 'java'
+    id 'com.github.johnrengelman.shadow' version '8.1.1'
 }
 
 group = 'com.bedepay'
@@ -20,6 +21,7 @@ repositories {
 dependencies {
     compileOnly("org.spigotmc:spigot-api:1.20.4-R0.1-SNAPSHOT")
     implementation 'org.json:json:20231013'
+    implementation 'mysql:mysql-connector-java:8.0.33'
 }
 
 def targetJavaVersion = 21
@@ -27,6 +29,7 @@ java {
     def javaVersion = JavaVersion.toVersion(targetJavaVersion)
     sourceCompatibility = javaVersion
     targetCompatibility = javaVersion
+
     if (JavaVersion.current() < javaVersion) {
         toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
     }
@@ -34,7 +37,6 @@ java {
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
-
     if (targetJavaVersion >= 10 || JavaVersion.current().isJava10Compatible()) {
         options.release.set(targetJavaVersion)
     }
@@ -48,3 +50,14 @@ processResources {
         expand props
     }
 }
+
+// Настраиваем Shadow, чтобы собрать fat-jar со всеми зависимостями
+tasks.shadowJar {
+    archiveFileName.set("TradeMc-${version}.jar")
+    // Если нужно, можно relocate пакеты:
+    // relocate 'com.mysql', 'com.bedepay.libs.mysql'
+    // relocate 'org.json', 'com.bedepay.libs.json'
+}
+
+// Указываем, что при сборке вызывается shadowJar
+tasks.build.dependsOn tasks.shadowJar

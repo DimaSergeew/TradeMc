@@ -6,13 +6,14 @@ authors: [ bedepay ]
 
 commands:
   trademc:
-    description: Основная команда плагина TradeMC
+    description: Главная команда для работы с TradeMC
     usage: /<command> [check|getOnline|history]
     permission: trademc.use
+    tab-completer: com.bedepay.trademc.TradeMc
 
 permissions:
   trademc.use:
-    description: Позволяет пользоваться /trademc
+    description: Позволяет использовать /trademc
     default: true
   trademc.admin:
     description: Полный доступ к функционалу плагина (check, history)
