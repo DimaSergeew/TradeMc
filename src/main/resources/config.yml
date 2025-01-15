@@ -1,4 +1,4 @@
-shops: "168130"  # Можно "168130,168131" если несколько
+shops: "0"  # Можно "168130,168131" если несколько
 api-version: 3 # Версия API TradeMC
 check-interval-seconds: 60 # Интервал проверки новых покупок в секундах
 retry-attempts: 3 # Количество попыток повтора при ошибке
@@ -13,7 +13,7 @@ callback: # Настройки обратного вызова
 callback-key: "Your_Shop_Secret_Key"  # Ключ для проверки hash
 
 mysql: # MySQL настройки
-  enabled: true # Включен ли MySQL
+  enabled: false # Включен ли MySQL
   host: "localhost" # Хост MySQL
   port: 3306 # Порт MySQL
   database: "trade_db" # Имя базы данных
