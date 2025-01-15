@@ -16,7 +16,6 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
 import com.sun.net.httpserver.HttpServer;
-import com.sun.net.httpserver.HttpExchange;
 
 import java.io.*;
 import java.lang.reflect.Method;
@@ -29,7 +28,6 @@ import java.security.MessageDigest;
 import java.sql.*;
 import java.text.SimpleDateFormat;
 import java.util.*;
-import java.util.Date;
 
 public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
 
@@ -149,10 +147,11 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
                 sender.sendMessage(color(getLocaleMsg("messages.not-allowed")));
                 return true;
             }
-            boolean success = testConnection();
-            sender.sendMessage(color(success 
-                ? getLocaleMsg("messages.check-ok") 
-                : getLocaleMsg("messages.check-fail")));
+            boolean trademcStatus = testConnection();
+            boolean callbackStatus = callbackEnabled && callbackServer != null;
+            String trademcStatusMsg = trademcStatus ? "&aTradeMC API: OK" : "&cTradeMC API: FAIL";
+            String callbackStatusMsg = callbackStatus ? "&aCallback: OK" : "&cCallback: FAIL";
+            sender.sendMessage(color("&eTradeMC Status: " + trademcStatusMsg + ", " + callbackStatusMsg));
             return true;
         }
 
@@ -186,24 +185,48 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
             return true;
         }
 
-        // /trademc debugPurchase <JSON>
-        if (args.length >= 1 && args[0].equalsIgnoreCase("debugPurchase")) {
+        // /trademc debugPurchase <buyer> <itemId> <itemName>
+        if (args.length >= 3 && args[0].equalsIgnoreCase("debugPurchase")) {
             if (!sender.hasPermission("trademc.admin")) {
                 sender.sendMessage(color(getLocaleMsg("messages.not-allowed")));
                 return true;
             }
-            if (args.length < 2) {
-                sender.sendMessage(color("&cИспользование: /trademc debugPurchase <JSON>"));
+            String buyer = args[1];
+            String itemId = args[2];
+            // Объединяем оставшиеся аргументы как имя предмета
+            String itemName = String.join(" ", Arrays.copyOfRange(args, 3, args.length));
+            if (itemName.isEmpty()) {
+                itemName = itemId; // Если имя предмета не указано, используем itemId
+            }
+
+            // Создаём JSON и вычисляем хеш внутри плагина
+            JsonObject purchaseObj = new JsonObject();
+            purchaseObj.addProperty("shop_id", 168130); // Можно сделать настраиваемым
+            purchaseObj.addProperty("buyer", buyer);
+            JsonArray itemsArray = new JsonArray();
+            JsonObject itemObj = new JsonObject();
+            itemObj.addProperty("id", itemId);
+            itemObj.addProperty("name", itemName);
+            itemObj.addProperty("cost", 9.99); // Можно сделать настраиваемым
+            itemObj.addProperty("result", true);
+            itemsArray.add(itemObj);
+            purchaseObj.add("items", itemsArray);
+
+            // Получаем callback-key из config.yml
+            String shopKey = config.getString("callback-key", "");
+            if (shopKey.isEmpty()) {
+                sender.sendMessage(color("&cОшибка: callback-key не задан в config.yml!"));
                 return true;
             }
-            // Склеиваем все аргументы (начиная со 2-го) в одну строку JSON
-            StringBuilder sb = new StringBuilder();
-            for (int i = 1; i < args.length; i++) {
-                sb.append(args[i]).append(" ");
-            }
-            String jsonStr = sb.toString().trim();
 
-            // Пытаемся обработать, как будто это пришёл POST с сайта
+            // Преобразуем объект в строку для хеширования
+            String pureJson = purchaseObj.toString();
+            String hash = sha256(pureJson + shopKey);
+            purchaseObj.addProperty("hash", hash);
+
+            String jsonStr = purchaseObj.toString();
+
+            // Обрабатываем покупку
             try {
                 handlePurchaseCallback(jsonStr);
                 sender.sendMessage(color("&aDebug purchase обработан. Смотри консоль/логи для подробностей."));
@@ -214,7 +237,7 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
         }
 
         // Иначе подсказка
-        sender.sendMessage(color("&e/trademc check, /trademc getOnline, /trademc history, /trademc debugPurchase"));
+        sender.sendMessage(color("&e/trademc check, /trademc getOnline, /trademc history, /trademc debugPurchase <buyer> <itemId> <itemName>"));
         return true;
     }
 
@@ -295,7 +318,7 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
                     ? purchaseObj.get("buyer").getAsString() 
                     : "";
                 JsonObject itemObj = purchaseObj.has("item") 
-                    ? purchaseObj.get("item").getAsJsonObject() 
+                    ? purchaseObj.getAsJsonObject("item")
                     : null;
                 String itemId = (itemObj != null && itemObj.has("id")) 
                     ? itemObj.get("id").getAsString() 
@@ -319,7 +342,7 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
                             k -> new ArrayList<>()
                         ).add(itemName);
                         savePendingPurchases();
-                        getLogger().info("[TradeMC] Игрок " + buyer + " офлайн, донат '" + itemName + "' отложен.");
+                        getLogger().info("Игрок " + buyer + " офлайн, донат '" + itemName + "' отложен.");
                     }
                 }
             }
@@ -379,21 +402,23 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
             con.setReadTimeout(5000);
 
             int status = con.getResponseCode();
-            BufferedReader in = new BufferedReader(
+            try (BufferedReader in = new BufferedReader(
                 new InputStreamReader(
                     (status >= 200 && status < 300) 
                         ? con.getInputStream() 
-                        : con.getErrorStream()
+                        : con.getErrorStream(),
+                    StandardCharsets.UTF_8
                 )
-            );
-            StringBuilder sb = new StringBuilder();
-            String line;
-            while ((line = in.readLine()) != null) {
-                sb.append(line);
+            )) {
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = in.readLine()) != null) {
+                    sb.append(line);
+                }
+                return sb.toString();
+            } finally {
+                con.disconnect();
             }
-            in.close();
-            con.disconnect();
-            return sb.toString();
         } catch (Exception e) {
             return "{\"error\": {\"message\": \"" + e.getMessage() + "\"}}";
         }
@@ -404,8 +429,7 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
         if (HAS_PARSE_STRING) {
             return JsonParser.parseString(json); 
         } else {
-            JsonParser parser = new JsonParser();
-            return parser.parse(json);
+            return new JsonParser().parse(json);
         }
     }
 
@@ -437,7 +461,7 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
         try {
             if (dataFile.exists()) {
                 SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd_HHmmss");
-                String backupName = "data_" + sdf.format(new Date()) + ".yml";
+                String backupName = "data_" + sdf.format(new java.util.Date()) + ".yml";
                 File backupFile = new File(getDataFolder(), backupName);
                 Files.copy(dataFile.toPath(), backupFile.toPath());
             }
@@ -505,7 +529,7 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
             }
             File logFile = new File(logDir, "trademc.log");
             try (FileWriter fw = new FileWriter(logFile, true)) {
-                fw.write("[" + new Date() + "] " + message + "\n");
+                fw.write("[" + new java.util.Date() + "] " + message + "\n");
             }
         } catch (IOException e) {
             getLogger().warning("[TradeMC] Не удалось записать в лог: " + e.getMessage());
@@ -716,7 +740,7 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
                             k -> new ArrayList<>()
                         ).add("Item#" + itemId);
                         savePendingPurchases();
-                        getLogger().info("[TradeMC] Игрок " + buyerName + " офлайн, донат 'Item#" + itemId + "' отложен.");
+                        getLogger().info("Игрок " + buyerName + " офлайн, донат 'Item#" + itemId + "' отложен.");
                     }
                 }
             }
