@@ -3,7 +3,6 @@ version: '1.4'
 main: com.bedepay.trademc.TradeMc
 api-version: '1.20'
 authors: [ bedepay ]
-
 commands:
   trademc:
     description: Главная команда для работы с TradeMC

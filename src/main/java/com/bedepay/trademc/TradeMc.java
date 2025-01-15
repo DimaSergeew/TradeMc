@@ -1,7 +1,6 @@
 package com.bedepay.trademc;
 
 import org.bukkit.Bukkit;
-import org.bukkit.OfflinePlayer;
 import org.bukkit.command.*;
 import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.FileConfiguration;
@@ -29,15 +28,8 @@ import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.sql.*;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
+import java.util.*;
 import java.util.Date;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
 
@@ -46,9 +38,11 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
     static {
         boolean parseStringExists = false;
         try {
+            Class.forName("com.google.gson.JsonParser");
+            // Проверяем наличие метода parseString
             Method m = JsonParser.class.getDeclaredMethod("parseString", String.class);
             parseStringExists = (m != null);
-        } catch (NoSuchMethodException ignore) {
+        } catch (Exception ignore) {
         }
         HAS_PARSE_STRING = parseStringExists;
     }
@@ -303,9 +297,9 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
                 JsonObject itemObj = purchaseObj.has("item") 
                     ? purchaseObj.get("item").getAsJsonObject() 
                     : null;
-                int itemId = (itemObj != null && itemObj.has("id")) 
-                    ? itemObj.get("id").getAsInt() 
-                    : -1;
+                String itemId = (itemObj != null && itemObj.has("id")) 
+                    ? itemObj.get("id").getAsString() 
+                    : "UnknownID";
                 String itemName = (itemObj != null && itemObj.has("name")) 
                     ? itemObj.get("name").getAsString() 
                     : "Unknown";
@@ -748,9 +742,6 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
             return "";
         }
     }
-
-    // --- Обработка Purchase Callback через Debug Command ---
-    // Уже реализовано в onCommand с подкомандой debugPurchase
 
     // --- Дополнительные методы ---
 
