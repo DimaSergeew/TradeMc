@@ -1,0 +1,10 @@
+messages:
+  prefix: "&a[TradeMC]&r "
+  purchase-broadcast: "&eИгрок &b%buyer% &eкупил &6%item%!"
+  purchase-log: "Выдан донат '%item%' игроку %buyer%"
+  not-allowed: "&cУ тебя нет прав!"
+  check-ok: "&aСоединение с TradeMC успешно!"
+  check-fail: "&cОшибка при проверке соединения!"
+  getonline: "&eОтвет shop.getOnline:"
+  history-title: "&6История выдачи донатов:"
+  history-empty: "&7(Пока пусто)"

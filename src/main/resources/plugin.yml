@@ -1,0 +1,19 @@
+name: TradeMc
+version: '1.1'
+main: com.bedepay.trademc.TradeMc
+api-version: '1.20'
+authors: [ bedepay ]
+
+commands:
+  trademc:
+    description: Основная команда плагина TradeMC
+    usage: /<command> [check|getOnline|history]
+    permission: trademc.use
+
+permissions:
+  trademc.use:
+    description: Позволяет пользоваться /trademc
+    default: true
+  trademc.admin:
+    description: Полный доступ к функционалу плагина (check, history)
+    default: op
