@@ -16,15 +16,28 @@ import com.google.gson.JsonParser;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
+import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpExchange;
+
 import java.io.*;
 import java.lang.reflect.Method;
 import java.net.HttpURLConnection;
+import java.net.InetSocketAddress;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.security.MessageDigest;
 import java.sql.*;
 import java.text.SimpleDateFormat;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
 
@@ -57,6 +70,10 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
     private Connection connection = null;
     private boolean mysqlEnabled = false;
 
+    // --- Callback HTTP-сервер ---
+    private HttpServer callbackServer;
+    private boolean callbackEnabled = false;
+
     @Override
     public void onEnable() {
         saveDefaultConfig();
@@ -65,11 +82,20 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
         // Загружаем локализацию locale.yml
         loadLocale();
 
-        // Проверяем, нужно ли MySQL, если да — подключаемся
+        // Подключаемся к MySQL, если включено
         mysqlEnabled = config.getBoolean("mysql.enabled", false);
         if (mysqlEnabled) {
             connectToMySQL();
             createTableIfNotExists();
+        }
+
+        // Запускаем Callback-сервер, если включено
+        callbackEnabled = config.getBoolean("callback.enabled", false);
+        if (callbackEnabled) {
+            String host = config.getString("callback.host", "0.0.0.0");
+            int port = config.getInt("callback.port", 8080);
+            String path = config.getString("callback.path", "/tradecallback");
+            startCallbackServer(host, port, path);
         }
 
         // Загружаем/создаём data.yml
@@ -83,7 +109,7 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
         // Регистрируем автодополнение для /trademc
         getCommand("trademc").setTabCompleter(this);
 
-        // Однократная проверка покупок при старте
+        // Однократная проверка покупок при старте (полезно, если Callback не сработал)
         checkNewPurchases(false);
 
         // Периодическая проверка покупок
@@ -106,6 +132,9 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
 
         // Закрываем MySQL (если активен)
         closeMySQL();
+
+        // Останавливаем Callback-сервер
+        stopCallbackServer();
 
         getLogger().info("TradeMC плагин отключён.");
     }
@@ -163,8 +192,35 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
             return true;
         }
 
-        // Подсказка
-        sender.sendMessage(color("&e/trademc check, /trademc getOnline, /trademc history"));
+        // /trademc debugPurchase <JSON>
+        if (args.length >= 1 && args[0].equalsIgnoreCase("debugPurchase")) {
+            if (!sender.hasPermission("trademc.admin")) {
+                sender.sendMessage(color(getLocaleMsg("messages.not-allowed")));
+                return true;
+            }
+            if (args.length < 2) {
+                sender.sendMessage(color("&cИспользование: /trademc debugPurchase <JSON>"));
+                return true;
+            }
+            // Склеиваем все аргументы (начиная со 2-го) в одну строку JSON
+            StringBuilder sb = new StringBuilder();
+            for (int i = 1; i < args.length; i++) {
+                sb.append(args[i]).append(" ");
+            }
+            String jsonStr = sb.toString().trim();
+
+            // Пытаемся обработать, как будто это пришёл POST с сайта
+            try {
+                handlePurchaseCallback(jsonStr);
+                sender.sendMessage(color("&aDebug purchase обработан. Смотри консоль/логи для подробностей."));
+            } catch (Exception e) {
+                sender.sendMessage(color("&cОшибка: " + e.getMessage()));
+            }
+            return true;
+        }
+
+        // Иначе подсказка
+        sender.sendMessage(color("&e/trademc check, /trademc getOnline, /trademc history, /trademc debugPurchase"));
         return true;
     }
 
@@ -175,7 +231,7 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
 
         if (args.length == 1) {
             // Подкоманды
-            List<String> subCommands = Arrays.asList("check", "getOnline", "history");
+            List<String> subCommands = Arrays.asList("check", "getOnline", "history", "debugPurchase");
             List<String> result = new ArrayList<>();
             for (String sc : subCommands) {
                 if (sc.toLowerCase().startsWith(args[0].toLowerCase())) {
@@ -421,6 +477,8 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
     }
 
     private void savePendingPurchases() {
+        // Очистим раздел "pending" перед сохранением
+        dataConfig.set("pending", null);
         for (Map.Entry<String, List<String>> entry : pendingPurchases.entrySet()) {
             dataConfig.set("pending." + entry.getKey(), entry.getValue());
         }
@@ -506,12 +564,16 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
 
         try {
             // Для старых версий драйвера
-            Class.forName("com.mysql.jdbc.Driver"); 
-            // Или для новых: Class.forName("com.mysql.cj.jdbc.Driver");
+            try {
+                Class.forName("com.mysql.jdbc.Driver");
+            } catch (ClassNotFoundException e) {
+                // Для новых версий
+                Class.forName("com.mysql.cj.jdbc.Driver");
+            }
             connection = DriverManager.getConnection(url, user, pass);
-            getLogger().info("Успешно подключились к MySQL!");
+            getLogger().info(color(getLocaleMsg("messages.mysql-ok")));
         } catch (Exception e) {
-            getLogger().warning("Не удалось подключиться к MySQL: " + e.getMessage());
+            getLogger().warning(color(getLocaleMsg("messages.mysql-fail")) + " " + e.getMessage());
             mysqlEnabled = false; // отключим дальнейшие действия
         }
     }
@@ -538,9 +600,179 @@ public class TradeMc extends JavaPlugin implements TabCompleter, Listener {
         }
     }
 
+    // --- Callback HTTP-сервер ---
+    private void startCallbackServer(String host, int port, String path) {
+        try {
+            callbackServer = HttpServer.create(new InetSocketAddress(host, port), 0);
+            callbackServer.createContext(path, (exchange -> {
+                if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                    // Считываем тело запроса
+                    InputStream is = exchange.getRequestBody();
+                    String requestBody = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+                    
+                    // Обрабатываем в асинхронном режиме
+                    Bukkit.getScheduler().runTask(this, () -> {
+                        handlePurchaseCallback(requestBody);
+                    });
+
+                    // Отвечаем клиенту
+                    String response = "OK";
+                    exchange.sendResponseHeaders(200, response.getBytes().length);
+                    try (OutputStream os = exchange.getResponseBody()) {
+                        os.write(response.getBytes());
+                    }
+                } else {
+                    // Если не POST - 405 Method Not Allowed
+                    exchange.sendResponseHeaders(405, -1);
+                }
+            }));
+            callbackServer.start();
+            getLogger().info(color("&aCallback-сервер запущен на " + host + ":" + port + path));
+        } catch (IOException e) {
+            getLogger().warning(color("&cНе удалось запустить callback-сервер: " + e.getMessage()));
+        }
+    }
+
+    private void stopCallbackServer() {
+        if (callbackServer != null) {
+            callbackServer.stop(0);
+            getLogger().info("Callback-сервер остановлен.");
+        }
+    }
+
+    // --- Обработка Purchase Callback ---
+    /**
+     * Обрабатывает JSON из обратного вызова (callback).
+     * Формат JSON см. в описании API (shop_id, buyer, items[], hash, etc.).
+     */
+    private void handlePurchaseCallback(String jsonStr) {
+        JsonElement root = parseJson(jsonStr);
+        if (!root.isJsonObject()) {
+            getLogger().warning("handlePurchaseCallback: JSON не объект!");
+            return;
+        }
+        JsonObject obj = root.getAsJsonObject();
+
+        // Считываем hash
+        if (!obj.has("hash")) {
+            getLogger().warning("handlePurchaseCallback: Нет свойства 'hash'!");
+            return;
+        }
+        String givenHash = obj.get("hash").getAsString();
+        
+        // Удаляем "hash" из объекта, чтобы получить «чистый» JSON для проверки
+        obj.remove("hash");
+        
+        // Превращаем объект обратно в строку:
+        String pureJson = obj.toString();
+        
+        // Считываем ключ из config.yml
+        String shopKey = config.getString("callback-key", "");
+        if (shopKey.isEmpty()) {
+            getLogger().warning("handlePurchaseCallback: callback-key не задан в config.yml!");
+            return;
+        }
+        
+        // Вычисляем sha256(pureJson + shopKey)
+        String calcHash = sha256(pureJson + shopKey);
+        if (!calcHash.equalsIgnoreCase(givenHash)) {
+            getLogger().warning("handlePurchaseCallback: неверный hash! Ожидалось: " + calcHash + ", пришло: " + givenHash);
+            return;
+        }
+        // Если дошли сюда, значит hash корректен
+
+        // Читаем shop_id (может использоваться для мульти-магазинов)
+        int shopId = obj.has("shop_id") ? obj.get("shop_id").getAsInt() : -1;
+
+        // Читаем buyer
+        String buyerName = obj.has("buyer") ? obj.get("buyer").getAsString() : "";
+
+        // Читаем items
+        if (obj.has("items") && obj.get("items").isJsonArray()) {
+            JsonArray itemsArray = obj.get("items").getAsJsonArray();
+            for (JsonElement el : itemsArray) {
+                if (!el.isJsonObject()) continue;
+                JsonObject itemObj = el.getAsJsonObject();
+
+                // Извлекаем необходимые поля
+                String itemId = itemObj.has("id") ? itemObj.get("id").getAsString() : "UnknownID";
+                double cost = itemObj.has("cost") ? itemObj.get("cost").getAsDouble() : 0.0;
+                boolean result = itemObj.has("result") && itemObj.get("result").getAsBoolean();
+
+                // Статус выдачи
+                if (!result) {
+                    getLogger().warning("handlePurchaseCallback: Товар ID=" + itemId + " не выдан. Результат: false");
+                    continue;
+                }
+
+                // Уникальный ключ: buyer_itemId
+                String uniqueKey = buyerName + "_" + itemId;
+                if (!processedPurchases.contains(uniqueKey)) {
+                    processedPurchases.add(uniqueKey);
+                    saveProcessedPurchases();
+
+                    // Проверяем, онлайн ли игрок
+                    Player p = Bukkit.getPlayerExact(buyerName);
+                    if (p != null && p.isOnline()) {
+                        giveDonation(buyerName, "Item#" + itemId);
+                    } else {
+                        // Откладываем
+                        pendingPurchases.computeIfAbsent(
+                            buyerName.toLowerCase(), 
+                            k -> new ArrayList<>()
+                        ).add("Item#" + itemId);
+                        savePendingPurchases();
+                        getLogger().info("[TradeMC] Игрок " + buyerName + " офлайн, донат 'Item#" + itemId + "' отложен.");
+                    }
+                }
+            }
+        }
+
+        // Можно обработать дополнительные свойства: partners, rcon, fields, surcharge, coupon, game_currency
+        // в зависимости от потребностей плагина
+    }
+
+    /**
+     * Утилита: sha256(строка)
+     */
+    private String sha256(String input) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hexString = new StringBuilder();
+            for (byte b : hash) {
+                hexString.append(String.format("%02x", b));
+            }
+            return hexString.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    // --- Обработка Purchase Callback через Debug Command ---
+    // Уже реализовано в onCommand с подкомандой debugPurchase
+
+    // --- Дополнительные методы ---
+
+    /**
+     * Проверяет, доступен ли API TradeMC.
+     */
+    private boolean testTradeMcAPI() {
+        String response = callTradeMcApi("shop", "getOnline", "shop=" + getFirstShop());
+        return !response.contains("\"error\"");
+    }
+
+    /**
+     * Возвращает первый ID магазина из списка.
+     */
     private String getFirstShop() {
         String shops = config.getString("shops", "168130");
         String[] parts = shops.split(",");
         return parts[0].trim();
     }
+
+    // --- Callback HTTP-сервер ---
+    // Реализован выше
+
+    // --- End of TradeMc.java ---
 }
