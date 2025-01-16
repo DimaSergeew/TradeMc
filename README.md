@@ -10,7 +10,7 @@
 
 ## ⚙️ Установка
 
-1. Скачайте последнюю версию плагина из [Releases](https://github.com/your-repo/releases)
+1. Скачайте последнюю версию плагина из [Releases](https://github.com/DimaSergeew/TradeMc/releases)
 2. Поместите JAR файл в папку `plugins`
 3. Перезапустите сервер
 4. Настройте `config.yml`:
@@ -38,14 +38,15 @@
 
 Для разработчиков:
 
-java
+```java
 // Обработка входящего callback
-public void handlePurchaseCallback(String jsonStr) {
-JsonObject obj = JsonParser.parseString(jsonStr).getAsJsonObject();
-String buyer = obj.get("buyer").getAsString();
-JsonArray items = obj.get("items").getAsJsonArray();
+- public void handlePurchaseCallback(String jsonStr) {
+- JsonObject obj = JsonParser.parseString(jsonStr).getAsJsonObject();
+- String buyer = obj.get("buyer").getAsString();
+- JsonArray items = obj.get("items").getAsJsonArray();
 // Обработка покупки...
 }
+```
 ### События
 - Покупки обрабатываются асинхронно
 - Выдача наград происходит синхронно в основном потоке
@@ -60,8 +61,8 @@ JsonArray items = obj.get("items").getAsJsonArray();
 ## 📝 Конфигурация
 
 Основные настройки в `config.yml`:
-
-yaml
+# MySQL настройки...
+```yaml
 check-interval-seconds: 60
 retry-attempts: 3
 callback:
@@ -69,8 +70,7 @@ enabled: true
 port: 8080
 mysql:
 enabled: false
-# MySQL настройки...
-
+```
 
 ## 🤝 Поддержка
 
