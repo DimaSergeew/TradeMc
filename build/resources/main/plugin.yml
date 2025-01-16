@@ -5,15 +5,10 @@ api-version: '1.20'
 authors: [ bedepay ]
 commands:
   trademc:
-    description: Главная команда для работы с TradeMC
-    usage: /trademc [check|getOnline|history|debugPurchase]
-    permission: trademc.use
-    tab-completer: com.bedepay.trademc.TradeMc
-
+    description: Управление плагином TradeMC
+    usage: /<command> <reload|check|getOnline|history|debugPurchase>
+    permission: trademc.admin
 permissions:
-  trademc.use:
-    description: Позволяет использовать /trademc
-    default: true
   trademc.admin:
-    description: Полный доступ к функционалу плагина (reload, check, getOnline, history, debugPurchase)
+    description: Доступ к административным командам TradeMC
     default: op

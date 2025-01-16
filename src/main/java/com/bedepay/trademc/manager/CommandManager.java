@@ -2,10 +2,12 @@ package com.bedepay.trademc.manager;
 
 import com.bedepay.trademc.TradeMc;
 import com.bedepay.trademc.util.Utils;
+import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
+import org.bukkit.entity.Player;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -17,207 +19,253 @@ import java.util.List;
  */
 public class CommandManager implements CommandExecutor, TabCompleter {
     private final TradeMc plugin;
-    
+
     public CommandManager(TradeMc plugin) {
         this.plugin = plugin;
     }
-    
+
     /**
      * Обработчик команд плагина
      */
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
-        if (!cmd.getName().equalsIgnoreCase("trademc")) return false;
-        
-        // Проверка базового разрешения
-        if (!sender.hasPermission("trademc.use")) {
-            sender.sendMessage(Utils.color(plugin.getConfigManager().getLocaleMsg("messages.not-allowed")));
-            return true;
-        }
-        
         try {
-            // Обработка команд с одним аргументом
-            if (args.length == 1) {
-                switch (args[0].toLowerCase()) {
-                    case "reload":
-                        return handleReloadCommand(sender);
-                    case "check":
-                        return handleCheckCommand(sender);
-                    case "getonline":
-                        return handleGetOnlineCommand(sender);
-                    case "history":
-                        return handleHistoryCommand(sender);
-                    default:
-                        showHelp(sender);
-                        return true;
-                }
-            } 
-            // Обработка команды debugpurchase
-            else if (args.length >= 3 && args[0].equalsIgnoreCase("debugpurchase")) {
-                return handleDebugPurchaseCommand(sender, args);
+            if (!cmd.getName().equalsIgnoreCase("trademc")) return false;
+
+            plugin.getLogger().info("TradeMc Command Executed by " + sender.getName());
+
+            // Проверка валидности конфигурации
+            if (!plugin.isConfigValid()) {
+                sender.sendMessage(Utils.color("&cПлагин не настроен. Выполните /trademc reload после настройки конфигурации."));
+                return true;
             }
-            
-            showHelp(sender);
+
+            if (args.length == 0) {
+                showHelp(sender);
+                return true;
+            }
+
+            switch (args[0].toLowerCase()) {
+                case "reload":
+                    if (!sender.hasPermission("trademc.admin")) {
+                        sender.sendMessage(Utils.color(plugin.getConfigManager().getLocaleMsg("messages.not-allowed")));
+                        return true;
+                    }
+                    handleReloadCommand(sender);
+                    break;
+
+                case "check":
+                    if (!sender.hasPermission("trademc.admin")) {
+                        sender.sendMessage(Utils.color(plugin.getConfigManager().getLocaleMsg("messages.not-allowed")));
+                        return true;
+                    }
+                    handleCheckCommand(sender);
+                    break;
+
+                case "getonline":
+                    if (!sender.hasPermission("trademc.admin")) {
+                        sender.sendMessage(Utils.color(plugin.getConfigManager().getLocaleMsg("messages.not-allowed")));
+                        return true;
+                    }
+                    handleGetOnlineCommand(sender);
+                    break;
+
+                case "history":
+                    if (!sender.hasPermission("trademc.admin")) {
+                        sender.sendMessage(Utils.color(plugin.getConfigManager().getLocaleMsg("messages.not-allowed")));
+                        return true;
+                    }
+                    handleHistoryCommand(sender);
+                    break;
+
+                case "debugpurchase":
+                    if (!sender.hasPermission("trademc.admin")) {
+                        sender.sendMessage(Utils.color("&cНедостаточно прав!"));
+                        return true;
+                    }
+                    if (args.length >= 3) {
+                        handleDebugPurchaseCommand(sender, args);
+                    } else {
+                        sender.sendMessage(Utils.color("&cИспользование: /trademc debugPurchase <игрок> <itemId> [itemName]"));
+                    }
+                    break;
+
+                default:
+                    showHelp(sender);
+                    break;
+            }
             return true;
-            
         } catch (Exception e) {
-            sender.sendMessage(Utils.color("&cCommand execution error: " + e.getMessage()));
-            plugin.getLogger().severe("Command execution error: " + e.getMessage());
+            sender.sendMessage(Utils.color("&cПроизошла ошибка: " + e.getMessage()));
+            plugin.getLogger().severe("Error in command execution: " + e.getMessage());
             e.printStackTrace();
             return true;
         }
     }
-    
+
+    private void showHelp(CommandSender sender) {
+        sender.sendMessage(Utils.color("&6=== TradeMC Помощь ==="));
+        if (sender.hasPermission("trademc.admin")) {
+            sender.sendMessage(Utils.color("&e/trademc reload &7- Перезагрузить конфигурацию"));
+            sender.sendMessage(Utils.color("&e/trademc check &7- Проверить состояние TradeMC API"));
+            sender.sendMessage(Utils.color("&e/trademc getOnline &7- Проверить статус онлайн магазинов"));
+            sender.sendMessage(Utils.color("&e/trademc history &7- Просмотреть последние действия"));
+            sender.sendMessage(Utils.color("&e/trademc debugPurchase &7- Тестовая покупка для отладки"));
+        }
+    }
+
     /**
      * Проверяет статус подключения к TradeMC и callback серверу
      */
-    private boolean handleCheckCommand(CommandSender sender) {
-        if (!sender.hasPermission("trademc.admin")) {
-            sender.sendMessage(Utils.color(plugin.getConfigManager().getLocaleMsg("messages.not-allowed")));
-            return true;
-        }
-        
+    private void handleCheckCommand(CommandSender sender) {
         boolean trademcStatus = testConnection();
-        boolean callbackStatus = plugin.getCallbackServer().isEnabled();
-        
+        boolean callbackStatus = plugin.getCallbackServer() != null 
+            && plugin.getCallbackServer().isEnabled()
+            && plugin.getConfig().getBoolean("callback.enabled", false);
+
         String trademcStatusMsg = trademcStatus ? "&aTradeMC API: OK" : "&cTradeMC API: FAIL";
-        String callbackStatusMsg = callbackStatus ? "&aCallback: OK" : "&cCallback: FAIL";
-        
+        String callbackStatusMsg = plugin.getConfig().getBoolean("callback.enabled", false)
+            ? (callbackStatus ? "&aCallback: OK" : "&cCallback: FAIL")
+            : "&7Callback: Disabled";
+
         sender.sendMessage(Utils.color("&eTradeMC Status: " + trademcStatusMsg + ", " + callbackStatusMsg));
-        return true;
+        plugin.getLogger().info("TradeMc Check Command Executed by " + sender.getName());
     }
-    
+
     /**
      * Получает информацию о статусе онлайн магазина
      */
-    private boolean handleGetOnlineCommand(CommandSender sender) {
-        if (!sender.hasPermission("trademc.admin")) {
-            sender.sendMessage(Utils.color(plugin.getConfigManager().getLocaleMsg("messages.not-allowed")));
-            return true;
-        }
-        
+    private void handleGetOnlineCommand(CommandSender sender) {
         String response = plugin.getPurchaseManager().callTradeMcApi(
-            "shop", 
-            "getOnline", 
+            "shop",
+            "getOnline",
             "shop=" + plugin.getConfig().getString("shops", "0")
         );
-        
+
         sender.sendMessage(Utils.color(plugin.getConfigManager().getLocaleMsg("messages.getonline")));
-        sender.sendMessage(response);
-        return true;
+        sender.sendMessage(Utils.color(response));
+        plugin.getLogger().info("TradeMc GetOnline Command Executed by " + sender.getName());
     }
-    
+
     /**
      * Показывает историю последних покупок
      */
-    private boolean handleHistoryCommand(CommandSender sender) {
-        if (!sender.hasPermission("trademc.admin")) {
-            sender.sendMessage(Utils.color(plugin.getConfigManager().getLocaleMsg("messages.not-allowed")));
-            return true;
-        }
-        
-        List<String> logLines = Utils.loadLogLines(plugin, 10);
-        sender.sendMessage(Utils.color(plugin.getConfigManager().getLocaleMsg("messages.history-title")));
-        
-        if (logLines.isEmpty()) {
+    private void handleHistoryCommand(CommandSender sender) {
+        List<String> logs = Utils.loadLogLines(plugin, 10);
+        if (logs.isEmpty()) {
             sender.sendMessage(Utils.color(plugin.getConfigManager().getLocaleMsg("messages.history-empty")));
         } else {
-            for (String line : logLines) {
-                sender.sendMessage(Utils.color("&7" + line));
-            }
+            sender.sendMessage(Utils.color(plugin.getConfigManager().getLocaleMsg("messages.history-title")));
+            logs.forEach(line -> sender.sendMessage(Utils.color("&7" + line)));
         }
-        return true;
+        plugin.getLogger().info("TradeMc History Command Executed by " + sender.getName());
     }
-    
+
     /**
      * Обрабатывает тестовую покупку для отладки
      */
-    private boolean handleDebugPurchaseCommand(CommandSender sender, String[] args) {
-        if (!sender.hasPermission("trademc.admin")) {
-            sender.sendMessage(Utils.color(plugin.getConfigManager().getLocaleMsg("messages.not-allowed")));
-            return true;
-        }
-        
+    private void handleDebugPurchaseCommand(CommandSender sender, String[] args) {
         String buyer = args[1];
         String itemId = args[2];
-        String itemName = String.join(" ", Arrays.copyOfRange(args, 3, args.length));
-        if (itemName.isEmpty()) {
-            itemName = itemId;
-        }
-        
+        String itemName = (args.length >= 4) ? String.join(" ", Arrays.copyOfRange(args, 3, args.length)) : itemId;
+
         // Создаем тестовый JSON для обработки
-        String jsonStr = Utils.createDebugPurchaseJson(plugin, buyer, itemId, itemName);
+        String jsonStr = Utils.createDebugPurchaseJson(plugin, buyer, itemId, itemName).orElse(null);
         if (jsonStr == null) {
             sender.sendMessage(Utils.color("&cError: callback-key not set in config.yml!"));
-            return true;
+            return;
         }
-        
+
         try {
             plugin.getPurchaseManager().handlePurchaseCallback(jsonStr);
             sender.sendMessage(Utils.color("&aDebug purchase processed. Check console/logs for details."));
+            plugin.getLogger().info("TradeMc DebugPurchase Command Executed by " + sender.getName() + " for buyer " + buyer + ", item " + itemId);
         } catch (Exception e) {
             sender.sendMessage(Utils.color("&cError: " + e.getMessage()));
+            plugin.getLogger().severe("Error in debugPurchase command: " + e.getMessage());
+            e.printStackTrace();
         }
-        return true;
     }
-    
+
     /**
      * Перезагружает конфигурацию плагина
      */
-    private boolean handleReloadCommand(CommandSender sender) {
-        if (!sender.hasPermission("trademc.admin")) {
-            sender.sendMessage(Utils.color(plugin.getConfigManager().getLocaleMsg("messages.not-allowed")));
-            return true;
-        }
-        
+    private void handleReloadCommand(CommandSender sender) {
         try {
+            // Перезагружаем конфигурацию
             plugin.getConfigManager().loadConfigs();
-            sender.sendMessage(Utils.color(plugin.getConfigManager().getLocaleMsg("messages.reload-success")));
+
+            // Выводим текущие значения для отладки
+            String shopId = plugin.getConfig().getString("shops", "0");
+            String callbackKey = plugin.getConfig().getString("callback-key", "");
+            plugin.getLogger().info("Текущие значения после перезагрузки:");
+            plugin.getLogger().info("shops: " + shopId);
+            plugin.getLogger().info("callback-key: " + callbackKey);
+
+            boolean configValid = plugin.checkAndUpdateConfig();
+
+            if (configValid) {
+                sender.sendMessage(Utils.color("&a▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃"));
+                sender.sendMessage(Utils.color("&aКонфигурация успешно перезагружена!"));
+                sender.sendMessage(Utils.color("&aВсе настройки корректны."));
+                sender.sendMessage(Utils.color("&a▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃"));
+            } else {
+                sender.sendMessage(Utils.color("&e▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃"));
+                sender.sendMessage(Utils.color("&eКонфигурация перезагружена, но требует настройки!"));
+                sender.sendMessage(Utils.color("&eТекущие значения:"));
+                sender.sendMessage(Utils.color("&e- shops: " + shopId));
+                sender.sendMessage(Utils.color("&e- callback-key: " + (callbackKey.isEmpty() ? "не указан" : "указан")));
+                sender.sendMessage(Utils.color("&e▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃"));
+            }
         } catch (Exception e) {
-            sender.sendMessage(Utils.color(plugin.getConfigManager().getLocaleMsg("messages.reload-error")));
+            sender.sendMessage(Utils.color("&c▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃"));
+            sender.sendMessage(Utils.color("&cОшибка при перезагрузке конфигурации!"));
+            sender.sendMessage(Utils.color("&cПроверьте консоль сервера для получения деталей."));
+            sender.sendMessage(Utils.color("&c▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃"));
             plugin.getLogger().severe("Error reloading config: " + e.getMessage());
+            e.printStackTrace();
         }
-        return true;
     }
-    
-    /**
-     * Показывает справку по командам
-     */
-    private void showHelp(CommandSender sender) {
-        sender.sendMessage(Utils.color("&e/trademc reload, /trademc check, /trademc getOnline, " +
-                                     "/trademc history, /trademc debugPurchase <buyer> <itemId> <itemName>"));
-    }
-    
+
     /**
      * Проверяет подключение к API TradeMC
      */
     private boolean testConnection() {
         String response = plugin.getPurchaseManager().callTradeMcApi(
-            "shop", 
-            "getOnline", 
+            "shop",
+            "getOnline",
             "shop=" + plugin.getConfig().getString("shops", "0")
         );
         return !response.contains("\"error\"");
     }
-    
+
     /**
      * Обработчик автодополнения команд
      */
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (!command.getName().equalsIgnoreCase("trademc")) return null;
-        
+
         if (args.length == 1) {
             List<String> subCommands = Arrays.asList("reload", "check", "getOnline", "history", "debugPurchase");
             List<String> result = new ArrayList<>();
-            
+
             for (String sc : subCommands) {
                 if (sc.toLowerCase().startsWith(args[0].toLowerCase())) {
                     result.add(sc);
                 }
             }
             return result;
+        } else if (args.length == 2 && args[0].equalsIgnoreCase("debugpurchase")) {
+            // Предоставляем список онлайн игроков для автодополнения
+            List<String> onlinePlayers = new ArrayList<>();
+            Bukkit.getOnlinePlayers().forEach(player -> onlinePlayers.add(player.getName()));
+            return onlinePlayers;
+        } else if (args.length == 3 && args[0].equalsIgnoreCase("debugpurchase")) {
+            // Предоставляем примерные ID предметов или ничего
+            return Arrays.asList("item1", "item2", "item3"); // Замените на реальные ID предметов
         }
+
         return null;
     }
 }

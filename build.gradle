@@ -4,7 +4,7 @@ plugins {
 }
 
 group = 'com.bedepay'
-version = '1.5'
+version = '2.0'
 
 repositories {
     mavenCentral()
@@ -22,9 +22,10 @@ dependencies {
     compileOnly("org.spigotmc:spigot-api:1.20.4-R0.1-SNAPSHOT")
     implementation 'org.json:json:20231013'
     implementation 'mysql:mysql-connector-java:8.0.33'
+    implementation 'commons-io:commons-io:2.15.1'
 }
 
-def targetJavaVersion = 21
+def targetJavaVersion = 17
 java {
     def javaVersion = JavaVersion.toVersion(targetJavaVersion)
     sourceCompatibility = javaVersion
@@ -52,9 +53,7 @@ processResources {
 
 tasks.shadowJar {
     archiveFileName.set("TradeMc-${version}.jar")
-    // Опционально: relocate пакеты, чтобы избежать конфликтов
-    // relocate 'com.mysql', 'com.bedepay.libs.mysql'
-    // relocate 'org.json', 'com.bedepay.libs.json'
+    relocate 'org.apache.commons', 'com.bedepay.libs.commons'
 }
 
 tasks.build.dependsOn tasks.shadowJar
