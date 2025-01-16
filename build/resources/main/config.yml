@@ -19,4 +19,4 @@ callback: #не трогайте если не знаете что это!
 
 api-version: 3 # Версия API TradeMC
 
-callback-key: "ВАШ_CALLBACK_KEY" #Укажите ваш ключ | ключ Магазина
+callback-key: "" #Укажите ваш ключ | ключ Магазина
