@@ -7,13 +7,12 @@ import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
-import java.io.StringReader;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
-import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Менеджер для обработки покупок с TradeMC
@@ -21,6 +20,13 @@ import java.util.concurrent.*;
 public class PurchaseManager {
     private final TradeMc plugin;
     private final boolean isCallbackEnabled;
+
+    // Набор разрешённых команд для повышения безопасности
+    private static final Set<String> ALLOWED_COMMANDS = Set.of(
+        "lp user %player% group set Guardian",
+        "give %player% diamond 1"
+        // Добавьте другие разрешённые команды здесь
+    );
 
     public PurchaseManager(TradeMc plugin) {
         this.plugin = plugin;
@@ -42,7 +48,7 @@ public class PurchaseManager {
 
         CompletableFuture.runAsync(() -> {
             try {
-                String shopsParam = "shops=" + plugin.getConfig().getString("shops", "0");
+                String shopsParam = "shop=" + plugin.getConfig().getString("shops", "0");
                 String response = callTradeMcApi("shop", "getLastPurchases", shopsParam);
 
                 plugin.getLogger().info("[Poll] Проверка покупок...");
@@ -116,45 +122,47 @@ public class PurchaseManager {
                 continue;
             }
 
-            String uniqueKey = buyerName + "_" + itemId;
-            if (plugin.getConfigManager().getProcessedPurchases().add(uniqueKey)) {
-                processPurchase(buyerName, itemId, itemName);
-            } else {
-                plugin.getLogger().info("[" + (isCallbackEnabled ? "Callback" : "Poll") + "] Покупка уже обработана: " + uniqueKey);
+            // Обработка команд из rcon
+            if (itemObj.has("rcon") && itemObj.get("rcon").isJsonArray()) {
+                JsonArray rconCommands = itemObj.get("rcon").getAsJsonArray();
+                for (JsonElement cmdElement : rconCommands) {
+                    if (cmdElement.isJsonArray()) {
+                        JsonArray cmdArray = cmdElement.getAsJsonArray();
+                        if (cmdArray.size() >= 1) {
+                            String command = cmdArray.get(0).getAsString();
+                            executeCommand(buyerName, command, itemName);
+                        }
+                    }
+                }
             }
+
+            // Дополнительная обработка, если необходимо
+            // Например, логирование, оповещения и т.д.
         }
     }
 
     /**
-     * Обрабатывает одну покупку
+     * Выполняет команду от имени консоли
      */
-    private void processPurchase(String buyer, String itemId, String itemName) {
-        Player player = Bukkit.getPlayerExact(buyer);
-        if (player != null && player.isOnline()) {
-            giveDonation(buyer, itemName);
-        } else {
-            plugin.getConfigManager().getPendingPurchases()
-                .computeIfAbsent(buyer.toLowerCase(), k -> new ArrayList<>())
-                .add(itemName);
-            plugin.getLogger().info("Player " + buyer + " offline, donation '" + itemName + "' stored.");
-            plugin.getConfigManager().saveCurrentData();
-        }
-    }
+    private void executeCommand(String buyer, String command, String itemName) {
+        String executedCommand = command.replace("%player%", buyer);
+        plugin.getLogger().info("Executing command for purchase: " + executedCommand);
 
-    /**
-     * Выдает донат игроку
-     */
-    public void giveDonation(String buyer, String itemName) {
+        // Проверяем, разрешена ли команда для выполнения
+        if (!ALLOWED_COMMANDS.contains(command)) {
+            plugin.getLogger().warning("Попытка выполнения неразрешённой команды: " + command);
+            return;
+        }
+
         plugin.getServer().getScheduler().runTask(plugin, () -> {
             try {
-                // Выполнение команды от имени консоли
-                String command = itemName.replace("%player%", buyer);
-                plugin.getServer().dispatchCommand(plugin.getServer().getConsoleSender(), command);
+                plugin.getServer().dispatchCommand(plugin.getServer().getConsoleSender(), executedCommand);
+                plugin.getLogger().info("Command executed successfully for player: " + buyer);
 
                 // Логирование и оповещение
                 logAndNotify(buyer, itemName);
             } catch (Exception e) {
-                plugin.getLogger().severe("Error giving donation: " + e.getMessage());
+                plugin.getLogger().severe("Error executing command for player " + buyer + ": " + e.getMessage());
                 e.printStackTrace();
             }
         });
@@ -305,13 +313,23 @@ public class PurchaseManager {
             String itemId = itemObj.has("id") ? itemObj.get("id").getAsString() : "";
             String itemName = itemObj.has("name") ? itemObj.get("name").getAsString() : itemId;
 
-            String uniqueKey = buyer + "_" + itemId;
-            if (plugin.getConfigManager().getProcessedPurchases().add(uniqueKey)) {
-                plugin.getLogger().info("[" + mode + "] Обработка покупки: " + uniqueKey);
-                processPurchase(buyer, itemId, itemName);
-            } else {
-                plugin.getLogger().info("[" + mode + "] Покупка уже обработана: " + uniqueKey);
+            // Обработка команд из rcon
+            if (itemObj.has("rcon") && itemObj.get("rcon").isJsonArray()) {
+                JsonArray rconCommands = itemObj.get("rcon").getAsJsonArray();
+                for (JsonElement cmdElement : rconCommands) {
+                    if (cmdElement.isJsonArray()) {
+                        JsonArray cmdArray = cmdElement.getAsJsonArray();
+                        if (cmdArray.size() >= 1) {
+                            String command = cmdArray.get(0).getAsString();
+                            executeCommand(buyer, command, itemName);
+                        }
+                    }
+                }
             }
+
+            // Дополнительная обработка, если необходимо
+            // Например, логирование, оповещения и т.д.
+
         } catch (Exception e) {
             plugin.getLogger().severe("[" + mode + "] Ошибка обработки покупки: " + e.getMessage());
             e.printStackTrace();
@@ -324,11 +342,12 @@ public class PurchaseManager {
     public void processPendingPurchases(String playerName) {
         List<String> items = plugin.getConfigManager().getPendingPurchases().get(playerName);
         if (items != null && !items.isEmpty()) {
-            for (String itemName : new ArrayList<>(items)) {
-                giveDonation(playerName, itemName);
-                items.remove(itemName);
+            for (String itemId : new ArrayList<>(items)) {
+                // В данном случае, команды уже отправляются через callback, поэтому можно просто убрать запись из pendingPurchases
+                items.remove(itemId);
+                plugin.getLogger().info("Processed pending donation '" + itemId + "' for player " + playerName);
             }
-            plugin.getConfigManager().saveCurrentData();
+            plugin.getConfigManager().saveAll();
         }
     }
 }

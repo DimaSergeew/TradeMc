@@ -2,7 +2,7 @@
 shops: "YOUR_SHOP_ID"  # Замените "YOUR_SHOP_ID" на реальный ID вашего магазина
 
 # Ключ вашего магазина (обязательно, только если callback.enabled: true)
-callback-key: ""
+callback-key: "YOUR_CALLBACK_KEY"
 
 # Настройки проверки покупок
 check-interval-seconds: 60 # Как часто проверять новые покупки

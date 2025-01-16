@@ -1,76 +1,74 @@
 package com.bedepay.trademc.util;
 
 import com.bedepay.trademc.TradeMc;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
-import java.io.*;
-import java.nio.charset.StandardCharsets;
+import com.google.gson.*;
+import org.bukkit.ChatColor;
 import java.security.MessageDigest;
+import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
+import java.io.*;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.util.Collections;
 
 /**
- * Утилитарный класс с вспомогательными методами
+ * Утилиты для TradeMc
  */
 public class Utils {
 
     /**
-     * Заменяет символы & на § для цветового форматирования текста
+     * Преобразует цветовые коды в Bukkit формат
      */
-    public static String color(String input) {
-        return input.replace("&", "§");
+    public static String color(String msg) {
+        return ChatColor.translateAlternateColorCodes('&', msg);
     }
 
     /**
-     * Вычисляет SHA-256 хеш для входной строки
+     * Генерирует SHA-256 хэш
      */
     public static String sha256(String input) {
-        if (input == null) return "";
         try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
-            StringBuilder hexString = new StringBuilder();
-            for (byte b : hash) {
-                hexString.append(String.format("%02x", b));
-            }
-            return hexString.toString();
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] hash = md.digest(input.getBytes(StandardCharsets.UTF_8));
+            return String.format("%064x", new BigInteger(1, hash));
         } catch (Exception e) {
             return "";
         }
     }
 
     /**
-     * Записывает сообщение в лог-файл плагина
+     * Логирует сообщение в файл
      */
     public static void logToFile(TradeMc plugin, String message) {
-        try {
-            File logDir = new File(plugin.getDataFolder(), "logs");
-            if (!logDir.exists() && !logDir.mkdir()) {
-                plugin.getLogger().warning("Failed to create logs directory");
-                return;
-            }
+        if (!plugin.getConfig().getBoolean("logging.enabled", true)) return;
 
-            File logFile = new File(logDir, "trademc.log");
-            try (FileWriter fw = new FileWriter(logFile, true);
-                 BufferedWriter bw = new BufferedWriter(fw)) {
-                bw.write("[" + new Date() + "] " + message);
-                bw.newLine();
-            }
+        String logFilePath = plugin.getDataFolder() + File.separator + "logs" + File.separator + "purchases.log";
+        File logDir = new File(plugin.getDataFolder(), "logs");
+        if (!logDir.exists()) {
+            logDir.mkdirs();
+        }
+
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(logFilePath, true))) {
+            writer.write(message);
+            writer.newLine();
         } catch (IOException e) {
-            plugin.getLogger().warning("Failed to write to log: " + e.getMessage());
+            plugin.getLogger().severe("Ошибка записи в лог-файл: " + e.getMessage());
             e.printStackTrace();
         }
     }
 
     /**
-     * Загружает последние n строк из лог-файла
+     * Загружает последние n строк из файла логов
      */
     public static List<String> loadLogLines(TradeMc plugin, int n) {
         List<String> lines = new ArrayList<>();
-        File logFile = new File(plugin.getDataFolder(), "logs/trademc.log");
+        File logFile = new File(plugin.getDataFolder(), "logs/purchases.log");
         if (!logFile.exists()) return lines;
 
         try (BufferedReader reader = new BufferedReader(new FileReader(logFile))) {
@@ -84,52 +82,45 @@ public class Utils {
             lines.addAll(allLines.subList(start, allLines.size()));
             Collections.reverse(lines);
         } catch (IOException e) {
-            plugin.getLogger().warning("Failed to read log file: " + e.getMessage());
+            plugin.getLogger().severe("Ошибка чтения лог-файла: " + e.getMessage());
+            e.printStackTrace();
         }
         return lines;
     }
 
     /**
-     * Копирует файл из одного места в другое
-     */
-    public static void copyFile(File source, File dest) throws IOException {
-        try (InputStream is = new FileInputStream(source);
-             OutputStream os = new FileOutputStream(dest)) {
-            byte[] buffer = new byte[4096];
-            int length;
-            while ((length = is.read(buffer)) > 0) {
-                os.write(buffer, 0, length);
-            }
-        }
-    }
-
-    /**
-     * Создает тестовый JSON-объект покупки для отладки
+     * Создает тестовый JSON для отладки покупки
      */
     public static Optional<String> createDebugPurchaseJson(TradeMc plugin, String buyer, String itemId, String itemName) {
-        JsonObject purchaseObj = new JsonObject();
-        purchaseObj.addProperty("shop_id", plugin.getConfig().getString("shops", "0"));
-        purchaseObj.addProperty("buyer", buyer);
+        String callbackKey = plugin.getConfig().getString("callback-key", "");
+        if (callbackKey.isEmpty()) {
+            return Optional.empty();
+        }
 
+        JsonObject json = new JsonObject();
+        json.addProperty("shop_id", plugin.getConfig().getString("shops", "0"));
+        json.addProperty("buyer", buyer);
+        
         JsonArray itemsArray = new JsonArray();
         JsonObject itemObj = new JsonObject();
         itemObj.addProperty("id", itemId);
         itemObj.addProperty("name", itemName);
-        itemObj.addProperty("cost", 9.99);
         itemObj.addProperty("result", true);
+        // Добавляем rcon команды, если необходимо
+        JsonArray rconArray = new JsonArray();
+        JsonArray commandPair = new JsonArray();
+        commandPair.add("lp user " + buyer + " group set Guardian");
+        commandPair.add("Prefix successfully added!");
+        rconArray.add(commandPair);
+        itemObj.add("rcon", rconArray);
         itemsArray.add(itemObj);
+        json.add("items", itemsArray);
 
-        purchaseObj.add("items", itemsArray);
+        // Генерация хэша
+        String pureJson = json.toString();
+        String hash = sha256(pureJson + callbackKey);
+        json.addProperty("hash", hash);
 
-        String shopKey = plugin.getConfig().getString("callback-key", "");
-        if (shopKey.isEmpty()) {
-            return Optional.empty();
-        }
-
-        String pureJson = purchaseObj.toString();
-        String hash = sha256(pureJson + shopKey);
-        purchaseObj.addProperty("hash", hash);
-
-        return Optional.of(purchaseObj.toString());
+        return Optional.of(json.toString());
     }
 }

@@ -8,7 +8,6 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.*;
 import java.util.concurrent.Executors;
-import java.util.Date;
 import java.util.concurrent.ExecutorService;
 
 /**
@@ -23,7 +22,7 @@ public class TradeMc extends JavaPlugin implements Listener {
     private CommandManager commandManager;    // Управление командами
     private CallbackServer callbackServer;    // Сервер для обратных вызовов
     private boolean configValid = false;      // Поле для отслеживания валидности конфигурации
-    private final ExecutorService executorService = Executors.newCachedThreadPool();
+    private ExecutorService executorService;   // Асинхронный исполнитель для задач
 
     @Override
     public void onEnable() {
@@ -32,16 +31,20 @@ public class TradeMc extends JavaPlugin implements Listener {
             getLogger().info("║             ЗАПУСК ПЛАГИНА TRADEMC               ║");
             getLogger().info("╠═══════════════════════════════════════════════════╣");
 
+            // Инициализация ExecutorService
+            executorService = Executors.newCachedThreadPool();
+
             // Сохраняем конфиги
             saveDefaultConfig();
 
             // Инициализация менеджеров
             configManager = new ConfigManager(this);
+            configManager.loadConfigs();
 
             // Проверка настроек
             if (!checkAndUpdateConfig()) {
                 getLogger().info("║ ⚠ Требуется настройка плагина:                  ║");
-                getLogger().info("║ 1. Откройте файл plugins/TradeMC/config.yml     ║");
+                getLogger().info("║ 1. Откройте файл plugins/TradeMc/config.yml     ║");
                 getLogger().info("║ 2. Укажите ID магазина в параметре 'shops'     ║");
                 if (getConfig().getBoolean("callback.enabled", false)) {
                     getLogger().info("║ 3. Укажите ключ в параметре 'callback-key'     ║");
@@ -83,7 +86,7 @@ public class TradeMc extends JavaPlugin implements Listener {
         }
     }
 
-    private void startPurchaseChecker(int interval) {
+    public void startPurchaseChecker(int interval) {
         getServer().getScheduler().runTaskTimerAsynchronously(this,
             () -> {
                 if (isConfigValid()) {
@@ -110,9 +113,8 @@ public class TradeMc extends JavaPlugin implements Listener {
         getLogger().info("╔═══════════════════════════════════════════════════╗");
         getLogger().info("║              ПРОВЕРКА НАСТРОЕК TRADEMC            ║");
         getLogger().info("╠═══════════════════════════════════════════════════╣");
-        getLogger().info(String.format("║  ID Магазина (shops): %s%-20s  ║",
-            isShopIdValid ? shopId : "НЕ УКАЗАН",
-            isShopIdValid ? " " : " ⚠"));
+        getLogger().info(String.format("║  ID Магазина (shops): %-25s ║",
+            isShopIdValid ? shopId : "НЕ УКАЗАН ⚠"));
         if (callbackEnabled) {
             getLogger().info(String.format("║  Ключ магазина (callback-key): %-13s║",
                 isCallbackKeyValid ? "УКАЗАН ✓" : "НЕ УКАЗАН ⚠"));
@@ -154,7 +156,6 @@ public class TradeMc extends JavaPlugin implements Listener {
 
     @Override
     public void onDisable() {
-        executorService.shutdown();
         // Сохранение всех данных перед отключением
         if (configManager != null) {
             configManager.saveAll();
@@ -165,6 +166,9 @@ public class TradeMc extends JavaPlugin implements Listener {
         }
         if (callbackServer != null) {
             callbackServer.stop();
+        }
+        if (executorService != null && !executorService.isShutdown()) {
+            executorService.shutdown();
         }
         getLogger().info("TradeMc plugin disabled successfully");
     }
@@ -184,8 +188,9 @@ public class TradeMc extends JavaPlugin implements Listener {
     public PurchaseManager getPurchaseManager() { return purchaseManager; }
     public CommandManager getCommandManager() { return commandManager; }
     public CallbackServer getCallbackServer() { return callbackServer; }
+    public ExecutorService getExecutorService() { return executorService; }
 
-    public ExecutorService getExecutorService() {
-        return executorService;
+    public void setCallbackServer(CallbackServer server) {
+        this.callbackServer = server;
     }
 }

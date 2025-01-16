@@ -2,12 +2,12 @@ package com.bedepay.trademc.manager;
 
 import com.bedepay.trademc.TradeMc;
 import com.bedepay.trademc.util.Utils;
+import com.bedepay.trademc.server.CallbackServer;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
-import org.bukkit.entity.Player;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -119,9 +119,11 @@ public class CommandManager implements CommandExecutor, TabCompleter {
      */
     private void handleCheckCommand(CommandSender sender) {
         boolean trademcStatus = testConnection();
-        boolean callbackStatus = plugin.getCallbackServer() != null 
-            && plugin.getCallbackServer().isEnabled()
-            && plugin.getConfig().getBoolean("callback.enabled", false);
+        boolean callbackStatus = false;
+
+        if (plugin.getCallbackServer() != null && plugin.getConfig().getBoolean("callback.enabled", false)) {
+            callbackStatus = plugin.getCallbackServer().isEnabled();
+        }
 
         String trademcStatusMsg = trademcStatus ? "&aTradeMC API: OK" : "&cTradeMC API: FAIL";
         String callbackStatusMsg = plugin.getConfig().getBoolean("callback.enabled", false)
@@ -193,6 +195,7 @@ public class CommandManager implements CommandExecutor, TabCompleter {
     private void handleReloadCommand(CommandSender sender) {
         try {
             // Перезагружаем конфигурацию
+            plugin.reloadConfig();
             plugin.getConfigManager().loadConfigs();
 
             // Выводим текущие значения для отладки
@@ -205,6 +208,20 @@ public class CommandManager implements CommandExecutor, TabCompleter {
             boolean configValid = plugin.checkAndUpdateConfig();
 
             if (configValid) {
+                // Перезапускаем компоненты, если это необходимо
+                if (plugin.getCallbackServer() != null) {
+                    plugin.getCallbackServer().stop();
+                }
+
+                boolean callbackEnabled = plugin.getConfig().getBoolean("callback.enabled", false);
+                if (callbackEnabled) {
+                    plugin.setCallbackServer(new CallbackServer(plugin));
+                    plugin.getLogger().info("Callback server restarted.");
+                } else {
+                    int interval = plugin.getConfig().getInt("check-interval-seconds", 60);
+                    plugin.startPurchaseChecker(interval);
+                }
+
                 sender.sendMessage(Utils.color("&a▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃"));
                 sender.sendMessage(Utils.color("&aКонфигурация успешно перезагружена!"));
                 sender.sendMessage(Utils.color("&aВсе настройки корректны."));
@@ -256,14 +273,15 @@ public class CommandManager implements CommandExecutor, TabCompleter {
                 }
             }
             return result;
-        } else if (args.length == 2 && args[0].equalsIgnoreCase("debugpurchase")) {
+        } else if (args.length == 2 && args[0].equalsIgnoreCase("debugPurchase")) {
             // Предоставляем список онлайн игроков для автодополнения
             List<String> onlinePlayers = new ArrayList<>();
             Bukkit.getOnlinePlayers().forEach(player -> onlinePlayers.add(player.getName()));
             return onlinePlayers;
-        } else if (args.length == 3 && args[0].equalsIgnoreCase("debugpurchase")) {
-            // Предоставляем примерные ID предметов или ничего
-            return Arrays.asList("item1", "item2", "item3"); // Замените на реальные ID предметов
+        } else if (args.length == 3 && args[0].equalsIgnoreCase("debugPurchase")) {
+            // Предоставляем список доступных itemId для автодополнения
+            // Поскольку маппинг удалён, можно предложить пустой список или другие релевантные значения
+            return new ArrayList<>();
         }
 
         return null;

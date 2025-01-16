@@ -23,6 +23,7 @@ dependencies {
     implementation 'org.json:json:20231013'
     implementation 'mysql:mysql-connector-java:8.0.33'
     implementation 'commons-io:commons-io:2.15.1'
+    implementation 'commons-codec:commons-codec:1.16.0'
 }
 
 def targetJavaVersion = 17
@@ -54,6 +55,8 @@ processResources {
 tasks.shadowJar {
     archiveFileName.set("TradeMc-${version}.jar")
     relocate 'org.apache.commons', 'com.bedepay.libs.commons'
+    relocate 'org.apache.commons.codec', 'com.bedepay.libs.commons.codec'
+    relocate 'org.apache.commons.io', 'com.bedepay.libs.commons.io'
 }
 
 tasks.build.dependsOn tasks.shadowJar

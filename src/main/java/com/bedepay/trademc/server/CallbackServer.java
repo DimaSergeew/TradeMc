@@ -1,21 +1,16 @@
 package com.bedepay.trademc.server;
 
 import com.bedepay.trademc.TradeMc;
-import org.bukkit.Bukkit;
-import org.bukkit.scheduler.BukkitRunnable;
+import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
 
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-import java.io.InputStream;
-import java.io.OutputStream;
+import java.io.*;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.Executors;
-
-import com.sun.net.httpserver.*;
 
 /**
- * Сервер для обработки обратных вызовов от TradeMC
+ * Сервер для обработки обратных вызовов (callback) от TradeMC
  */
 public class CallbackServer {
     private final TradeMc plugin;
@@ -24,16 +19,10 @@ public class CallbackServer {
 
     public CallbackServer(TradeMc plugin) {
         this.plugin = plugin;
-        this.enabled = plugin.getConfig().getBoolean("callback.enabled", false);
-        if (enabled) {
-            start();
-        }
+        startServer();
     }
 
-    /**
-     * Запускает сервер обратных вызовов
-     */
-    public void start() {
+    private void startServer() {
         try {
             String host = plugin.getConfig().getString("callback.host", "0.0.0.0");
             int port = plugin.getConfig().getInt("callback.port", 8080);
@@ -41,37 +30,33 @@ public class CallbackServer {
 
             server = HttpServer.create(new InetSocketAddress(host, port), 0);
             server.createContext(path, new CallbackHandler(plugin));
-            server.setExecutor(Executors.newCachedThreadPool());
+            server.setExecutor(null); // Использовать дефолтный исполнитель
             server.start();
-
-            plugin.getLogger().info("Сервер обратных вызовов запущен на " + host + ":" + port + path);
-        } catch (Exception e) {
-            plugin.getLogger().warning("Не удалось запустить сервер обратных вызовов: " + e.getMessage());
+            enabled = true;
+            plugin.getLogger().info("Callback server started on " + host + ":" + port + path);
+        } catch (IOException e) {
+            plugin.getLogger().severe("Не удалось запустить Callback сервер: " + e.getMessage());
             e.printStackTrace();
+            enabled = false;
         }
     }
 
-    /**
-     * Останавливает сервер обратных вызовов
-     */
+    public boolean isEnabled() {
+        return enabled && server != null;
+    }
+
     public void stop() {
         if (server != null) {
             server.stop(0);
-            plugin.getLogger().info("Сервер обратных вызовов остановлен");
+            plugin.getLogger().info("Callback server stopped.");
         }
+        enabled = false;
     }
 
     /**
-     * Проверяет, включен ли сервер
+     * Обработчик запросов от TradeMC
      */
-    public boolean isEnabled() {
-        return enabled;
-    }
-
-    /**
-     * Обработчик HTTP запросов для callback
-     */
-    private static class CallbackHandler implements HttpHandler {
+    static class CallbackHandler implements HttpHandler {
         private final TradeMc plugin;
 
         public CallbackHandler(TradeMc plugin) {
@@ -79,43 +64,27 @@ public class CallbackServer {
         }
 
         @Override
-        public void handle(HttpExchange exchange) {
-            if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-                new BukkitRunnable() {
-                    @Override
-                    public void run() {
-                        try {
-                            InputStream is = exchange.getRequestBody();
-                            String requestBody = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-                            plugin.getLogger().info("[Callback] Получен запрос: " + requestBody);
-
-                            // Валидация и обработка
-                            plugin.getPurchaseManager().handlePurchaseCallback(requestBody);
-
-                            // Отправка ответа клиенту
-                            String response = "OK";
-                            exchange.getResponseHeaders().add("Content-Type", "text/plain; charset=UTF-8");
-                            exchange.sendResponseHeaders(200, response.getBytes(StandardCharsets.UTF_8).length);
-                            try (OutputStream os = exchange.getResponseBody()) {
-                                os.write(response.getBytes(StandardCharsets.UTF_8));
-                            }
-                        } catch (Exception e) {
-                            plugin.getLogger().warning("Ошибка обработки обратного вызова: " + e.getMessage());
-                            try {
-                                exchange.sendResponseHeaders(500, -1);
-                            } catch (Exception ex) {
-                                plugin.getLogger().warning("Ошибка отправки 500 ответа: " + ex.getMessage());
-                            }
-                        }
-                    }
-                }.runTaskAsynchronously(plugin);
-            } else {
-                try {
-                    exchange.sendResponseHeaders(405, -1); // Метод не разрешен
-                } catch (Exception e) {
-                    plugin.getLogger().warning("Ошибка отправки 405 ответа: " + e.getMessage());
-                }
+        public void handle(HttpExchange exchange) throws IOException {
+            if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
+                exchange.sendResponseHeaders(405, -1); // Method Not Allowed
+                return;
             }
+
+            InputStream is = exchange.getRequestBody();
+            String body = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))
+                    .lines()
+                    .reduce("", (accumulator, actual) -> accumulator + actual);
+
+            plugin.getLogger().info("[Callback] Получены данные: " + body);
+
+            // Передаем данные PurchaseManager для обработки
+            plugin.getPurchaseManager().handlePurchaseCallback(body);
+
+            String response = "OK";
+            exchange.sendResponseHeaders(200, response.length());
+            OutputStream os = exchange.getResponseBody();
+            os.write(response.getBytes());
+            os.close();
         }
     }
 }
