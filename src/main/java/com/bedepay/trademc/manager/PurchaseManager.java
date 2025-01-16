@@ -13,6 +13,8 @@ import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Менеджер для обработки покупок с TradeMC
@@ -268,6 +270,20 @@ public class PurchaseManager {
         } catch (Exception e) {
             plugin.getLogger().severe("Error processing purchases response: " + e.getMessage());
             e.printStackTrace();
+        }
+    }
+    
+    public void processPendingPurchases(String playerName) {
+        Map<String, List<String>> pendingPurchases = plugin.getConfigManager().getPendingPurchases();
+        if (pendingPurchases.containsKey(playerName)) {
+            List<String> items = pendingPurchases.get(playerName);
+            if (items != null) {
+                for (String itemName : new ArrayList<>(items)) {
+                    giveDonation(playerName, itemName);
+                }
+                items.clear();
+                plugin.getConfigManager().saveDataFile();
+            }
         }
     }
 }
