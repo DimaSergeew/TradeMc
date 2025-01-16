@@ -14,6 +14,7 @@
 2. Поместите JAR файл в папку `plugins`
 3. Перезапустите сервер
 4. Настройте `config.yml`:
+5. 
    ```yaml
    shops: "ВАШ_ID_МАГАЗИНА"
    callback-key: "ВАШ_CALLBACK_KEY"
