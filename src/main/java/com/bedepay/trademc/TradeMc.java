@@ -27,6 +27,30 @@ public class TradeMc extends JavaPlugin implements Listener {
         try {
             // Инициализация менеджеров
             configManager = new ConfigManager(this);
+            
+            // Проверка настроек магазина
+            String shopId = getConfig().getString("shops", "0");
+            if (shopId.equals("0") || shopId.isEmpty()) {
+                getLogger().severe("╔════════════════════════════════════════════════╗");
+                getLogger().severe("║                   ВНИМАНИЕ!                    ║");
+                getLogger().severe("║        Не указан ID магазина в config.yml      ║");
+                getLogger().severe("║     Пожалуйста, укажите параметр 'shops'      ║");
+                getLogger().severe("╚════════════════════════════════════════════════╝");
+                getServer().getPluginManager().disablePlugin(this);
+                return;
+            }
+
+            String callbackKey = getConfig().getString("callback-key", "ВАШ_CALLBACK_KEY");
+            if (callbackKey.equals("ВАШ_CALLBACK_KEY") || callbackKey.isEmpty()) {
+                getLogger().severe("╔════════════════════════════════════════════════╗");
+                getLogger().severe("║                   ВНИМАНИЕ!                    ║");
+                getLogger().severe("║     Не указан CALLBACK-KEY в config.yml        ║");
+                getLogger().severe("║   Пожалуйста, укажите параметр 'callback-key' ║");
+                getLogger().severe("╚════════════════════════════════════════════════╝");
+                getServer().getPluginManager().disablePlugin(this);
+                return;
+            }
+
             databaseManager = new DatabaseManager(this);
             purchaseManager = new PurchaseManager(this);
             commandManager = new CommandManager(this);
